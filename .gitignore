@@ -1,0 +1,10 @@
+# vscode
+.vscode
+
+# cython
+build
+*.pyd
+*.c
+
+# roms
+*.nes
