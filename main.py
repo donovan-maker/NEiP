@@ -11,7 +11,7 @@ import os
 SCREEN_W, SCREEN_H = 512, 480
 
 root = tk.Tk()
-root.title("NEIP")
+root.title("NEiP")
 root.resizable(False, False)
 
 nes_lock  = threading.Lock()
@@ -69,7 +69,7 @@ def quitApp():
     root.after(200, root.destroy)
 
 def about():
-    messagebox.showinfo("About NEIP:", "NEIP stands for NES Emulator in Python.\nCreated by Donovan Black (FloppyDisk) in 2026.")
+    messagebox.showinfo("About NEiP:", "NEiP stands for NES Emulator in Python.\nCreated by Donovan Black (FloppyDisk) in 2026.")
 
 menubar = tk.Menu(root)
 root.config(menu=menubar)
@@ -121,7 +121,7 @@ CONTROLLER_MAP = {
 }
 
 def setTitle(fps):
-    root.title(f"NEIP - {fps:.1f} fps")
+    root.title(f"NEiP - {fps:.1f} fps")
 
 def emuThread():
     fb = nes.getFrameBuffer()   # fetch after loadRom so pointer is fresh
@@ -138,7 +138,7 @@ def emuThread():
                 nes.writeController1(c1)
                 nes.run()
         except Exception as e:
-            print(f"[NEIP] Emulator crashed: {e}")
+            print(f"[NEiP] Emulator crashed: {e}")
             screen.fill((0, 0, 0))
             pygame.display.flip()
             root.after(0, setTitle, 0)
