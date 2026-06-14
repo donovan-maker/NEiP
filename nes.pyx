@@ -548,6 +548,10 @@ cdef emulateCPU():
         interruptDisable = True
         DoNMI = False
         cycles += 7
+    elif opcode == 0x01:
+        # ORA x indexed
+        ora(read(Xindexed()))
+        cycles += 6
     elif opcode == 0x02:
         # HLT
         CPUHalted = True
@@ -594,10 +598,19 @@ cdef emulateCPU():
     elif opcode == 0x10:
         # BPL
         branch(readPCByte(), not negative)
+    elif opcode == 0x11:
+        # ORA y indexed
+        ora(read(Yindexed()))
+        cycles += 5
     elif opcode == 0x15:
         # ORA zero page, x
         ora(read((readPCByte()+X)&0xFF))
         cycles += 4
+    elif opcode == 0x16:
+        # ASL zero page, x
+        address = readPCByte()+X
+        write(address&0xFF, asl(read(address&0xFF)))
+        cycles += 6
     elif opcode == 0x18:
         # CLC
         carry = False
@@ -610,10 +623,19 @@ cdef emulateCPU():
         # ORA absolute, x
         ora(read((readPCWord()+X)&0xFFFF))
         cycles += 4
+    elif opcode == 0x1E:
+        # ASL absolute, x
+        address = readPCWord()+X
+        write(address&0xFFFF, asl(read(address&0xFFFF)))
+        cycles += 7
     elif opcode == 0x20:
         # JSR
         pushWord(PC+1)
         PC = readPCWord()
+        cycles += 6
+    elif opcode == 0x21:
+        # AND x indexed
+        andop(read(Xindexed()))
         cycles += 6
     elif opcode == 0x24:
         # BIT zero page
@@ -662,10 +684,19 @@ cdef emulateCPU():
     elif opcode == 0x30:
         # BMI
         branch(readPCByte(), negative)
+    elif opcode == 0x31:
+        # AND Y indexed
+        andop(read(Yindexed()))
+        cycles += 5
     elif opcode == 0x35:
         # AND zero page, x
         andop(read((readPCByte()+X)&0xFF))
         cycles += 4
+    elif opcode == 0x36:
+        # ROL zero page, x
+        address = readPCByte()+X
+        write(address&0xFF, rol(read(address&0xFF)))
+        cycles += 6
     elif opcode == 0x38:
         # SEC
         carry = True
@@ -678,6 +709,11 @@ cdef emulateCPU():
         # AND absolute, x
         andop(read((readPCWord()+X)&0xFFFF))
         cycles += 4
+    elif opcode == 0x3E:
+        # ROL absolute, x
+        address = readPCWord()+X
+        write(address&0xFFFF, rol(read(address&0xFFFF)))
+        cycles += 7
     elif opcode == 0x40:
         # RTI
         temp = pull()
@@ -690,6 +726,10 @@ cdef emulateCPU():
         tempLow = pull()
         tempHigh = pull()
         PC = (tempHigh<<8)|tempLow
+        cycles += 6
+    elif opcode == 0x41:
+        # EOR x indexed
+        eor(read(Xindexed()))
         cycles += 6
     elif opcode == 0x45:
         # EOR zero page
@@ -728,6 +768,14 @@ cdef emulateCPU():
     elif opcode == 0x50:
         # BVC
         branch(readPCByte(), not overflow)
+    elif opcode == 0x51:
+        # EOR y indexed
+        eor(read(Yindexed()))
+        cycles += 5
+    elif opcode == 0x55:
+        # EOR zero page, x
+        eor(read((readPCByte()+X)&0xFF))
+        cycles += 4
     elif opcode == 0x56:
         # LSR zero page, x
         address = readPCByte()+X
@@ -737,6 +785,14 @@ cdef emulateCPU():
         # CLI
         interruptDisable = False
         cycles += 2
+    elif opcode == 0x59:
+        # EOR absolute, y
+        eor(read((readPCWord()+Y)&0xFFFF))
+        cycles += 4
+    elif opcode == 0x5D:
+        # EOR absolute
+        eor(read((readPCWord()+X)&0xFFFF))
+        cycles += 4
     elif opcode == 0x5E:
         # LSR absolute, x
         address = readPCWord()+X
@@ -745,6 +801,10 @@ cdef emulateCPU():
     elif opcode == 0x60:
         # RTS
         PC = pullWord()+1
+        cycles += 6
+    elif opcode == 0x61:
+        # ADC x indexed
+        adc(read(Xindexed()))
         cycles += 6
     elif opcode == 0x65:
         # ADC zero page
@@ -771,7 +831,9 @@ cdef emulateCPU():
     elif opcode == 0x6C:
         # JMP indirect
         address = readPCWord()
-        PC = (read((address+1)&0xFFFF)<<8)|read(address)
+        low = read(address)
+        high = read((address & 0xFF00) | ((address + 1) & 0x00FF))  # page-wrap bug
+        PC = (high << 8) | low
         cycles += 5
     elif opcode == 0x6D:
         # ADC absolute
@@ -785,6 +847,10 @@ cdef emulateCPU():
     elif opcode == 0x70:
         # BVS
         branch(readPCByte(), overflow)
+    elif opcode == 0x71:
+        # ADC y indexed
+        adc(read(Yindexed()))
+        cycles += 5
     elif opcode == 0x75:
         # ADC zero page, x
         adc(read((readPCByte()+X)&0xFF))
@@ -1001,6 +1067,10 @@ cdef emulateCPU():
         # CPY immediate
         cmp(readPCByte(), Y)
         cycles += 2
+    elif opcode == 0xC1:
+        # CMP x indexed
+        cmp(read(Xindexed()), A)
+        cycles += 6
     elif opcode == 0xC4:
         # CPY zero page
         cmp(read(readPCByte()), Y)
@@ -1078,6 +1148,10 @@ cdef emulateCPU():
         # CPX immediate
         cmp(readPCByte(), X)
         cycles += 2
+    elif opcode == 0xE1:
+        # SBC x indexed
+        sbc(read(Xindexed()))
+        cycles += 6
     elif opcode == 0xE4:
         # CPX zero page
         cmp(read(readPCByte()), X)
@@ -1119,6 +1193,10 @@ cdef emulateCPU():
     elif opcode == 0xF0:
         # BEQ
         branch(readPCByte(), zero)
+    elif opcode == 0xF1:
+        # SBC y indexed
+        sbc(read(Yindexed()))
+        cycles += 5
     elif opcode == 0xF5:
         # SBC zero page, x
         sbc(read((readPCByte()+X)&0xFF))

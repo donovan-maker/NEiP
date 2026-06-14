@@ -80,7 +80,7 @@ def runSSTs():
         for inst in range(256):
             # Skip all unofficial instructions for now
             lowerPart = inst&0xF
-            upperPart = inst>>8
+            upperPart = inst>>4
             if lowerPart == 3:
                 continue
             if lowerPart == 7:
