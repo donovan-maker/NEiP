@@ -1,9 +1,5 @@
-from ctypes import c_uint8 as u8
-from ctypes import c_uint16 as u16
-from os import path as ospath
-
 cdef int PC = 0
-cdef int SP = 0
+cdef unsigned char SP = 0
 cdef int A = 0
 cdef int X = 0
 cdef int Y = 0
@@ -118,7 +114,6 @@ cpdef readRegs():
     flags += 2 if zero else 0
     flags += 4 if interruptDisable else 0
     flags += 8 if decimal else 0
-    flags += 0 if DoNMI else 0x10
     flags += 0x20
     flags += 0x40 if overflow else 0
     flags += 0x80 if negative else 0
@@ -131,6 +126,14 @@ cpdef setSSTRam(pos, value):
 cpdef readSSTRam(pos):
     global SSTRAM
     return SSTRAM[pos]
+
+cpdef setSSTMode():
+    global SSTMode
+    SSTMode = True
+
+cpdef clearSSTMode():
+    global SSTMode
+    SSTMode = False
 
 cpdef SSTStep():
     emulateCPU()
@@ -542,6 +545,7 @@ cdef emulateCPU():
         temp += 0x80 if negative else 0
         push(temp)
         PC = (read(0xFFFB if DoNMI else 0xFFFF)<<8)|read(0xFFFA if DoNMI else 0xFFFE)
+        interruptDisable = True
         DoNMI = False
         cycles += 7
     elif opcode == 0x02:

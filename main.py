@@ -111,29 +111,35 @@ def runSSTs():
             testJson = json.load(f)
             f.close()
             for entry in testJson:
-                init = entry["initial"]
-                nes.setRegs(init["a"], init["x"], init["y"], init["pc"], init["s"], init["p"])
-                for ramvals in init["ram"]:
-                    nes.setSSTRam(ramvals[0], ramvals[1])
-                nes.SSTStep()
-                final = entry["final"]
-                a, x, y, pc, sp, flags = nes.readRegs()
-                if a != final["a"]:
-                    raise Exception(f"In test for opcode 0x{inst:02x}, a={a} when {final["a"]} was expected")
-                if x != final["x"]:
-                    raise Exception(f"In test for opcode 0x{inst:02x}, x={x} when {final["x"]} was expected")
-                if y != final["y"]:
-                    raise Exception(f"In test for opcode 0x{inst:02x}, y={y} when {final["y"]} was expected")
-                if pc != final["pc"]:
-                    raise Exception(f"In test for opcode 0x{inst:02x}, pc={pc} when {final["pc"]} was expected")
-                if sp != final["s"]:
-                    raise Exception(f"In test for opcode 0x{inst:02x}, sp={sp} when {final["s"]} was expected")
-                if flags != final["p"]:
-                    raise Exception(f"In test for opcode 0x{inst:02x}, flags={flags} when {final["p"]} was expected")
-                for ramvals in final["ram"]:
-                    val = nes.readSSTRam(ramvals[0])
-                    if val != ramvals[1]:
-                        raise Exception(f"In test for opcode 0x{inst:02x}, ram[{ramvals[0]}/0x{ramvals[0]:04x}]={val} when {ramvals[1]} was expected")
+                try:
+                    init = entry["initial"]
+                    nes.setRegs(init["a"], init["x"], init["y"], init["pc"], init["s"], init["p"])
+                    for ramvals in init["ram"]:
+                        nes.setSSTRam(ramvals[0], ramvals[1])
+                    nes.setSSTMode()
+                    nes.SSTStep()
+                    nes.clearSSTMode()
+                    final = entry["final"]
+                    a, x, y, pc, sp, flags = nes.readRegs()
+                    if a != final["a"]:
+                        raise Exception(f"In test for opcode 0x{inst:02x}, a={a} when {final["a"]} was expected")
+                    if x != final["x"]:
+                        raise Exception(f"In test for opcode 0x{inst:02x}, x={x} when {final["x"]} was expected")
+                    if y != final["y"]:
+                        raise Exception(f"In test for opcode 0x{inst:02x}, y={y} when {final["y"]} was expected")
+                    if pc != final["pc"]:
+                        raise Exception(f"In test for opcode 0x{inst:02x}, pc={pc} when {final["pc"]} was expected")
+                    if sp != final["s"]:
+                        raise Exception(f"In test for opcode 0x{inst:02x}, sp={sp} when {final["s"]} was expected")
+                    if flags != final["p"]:
+                        raise Exception(f"In test for opcode 0x{inst:02x}, flags={flags} when {final["p"]} was expected")
+                    for ramvals in final["ram"]:
+                        val = nes.readSSTRam(ramvals[0])
+                        if val != ramvals[1]:
+                            raise Exception(f"In test for opcode 0x{inst:02x}, ram[{ramvals[0]}/0x{ramvals[0]:04x}]={val} when {ramvals[1]} was expected")
+                except Exception as e:
+                    print(f"Failed on test {entry["name"]}")
+                    raise e
             print(f"Instruction 0x{inst:02x} passed!")
         print("Every official instruction passed!")
 
@@ -206,6 +212,7 @@ def emuThread():
                 nes.run()
         except Exception as e:
             print(f"[NEiP] Emulator crashed: {e}")
+            print("Note: If two unknown opcodes were reported take the first one only")
             screen.fill((0, 0, 0))
             pygame.display.flip()
             root.after(0, setTitle, 0)
