@@ -4,9 +4,9 @@ import tkinter as tk
 import numpy as np
 import threading
 import pygame
-import queue
 import nes
 import os
+import json
 
 SCREEN_W, SCREEN_H = 512, 480
 
@@ -71,6 +71,72 @@ def quitApp():
 def about():
     messagebox.showinfo("About NEiP:", "NEiP stands for NES Emulator in Python.\nCreated by Donovan Black (FloppyDisk) in 2026.")
 
+def runSSTs():
+    if not os.path.isdir("SSTs/"):
+        messagebox.showerror("SSTs Not Found", "Running SSTs requires a folder with all properly formatted SST json files at the relative path SSTs/, and this path was not found.")
+        return
+    with nes_lock:
+        nes.reset()
+        for inst in range(256):
+            # Skip all unofficial instructions for now
+            lowerPart = inst&0xF
+            upperPart = inst>>8
+            if lowerPart == 3:
+                continue
+            if lowerPart == 7:
+                continue
+            if lowerPart == 0xB:
+                continue
+            if lowerPart == 0xF:
+                continue
+            if lowerPart == 2:
+                if upperPart != 0xA:
+                    continue
+            if lowerPart == 4:
+                if upperPart in [0,1,3,4,5,6,7,0xD,0xF]:
+                    continue
+            if lowerPart == 0xA:
+                if upperPart in [1,3,5,7,0xD,0xF]:
+                    continue
+            if lowerPart == 0xC:
+                if upperPart in [0,1,3,5,7,9,0xD,0xF]:
+                    continue
+            if inst == 0x80:
+                continue
+            if inst == 0x89:
+                continue
+            if inst == 0x9E:
+                continue
+            f = open(f"SSTs/{inst:02x}.json", "r")
+            testJson = json.load(f)
+            f.close()
+            for entry in testJson:
+                init = entry["initial"]
+                nes.setRegs(init["a"], init["x"], init["y"], init["pc"], init["s"], init["p"])
+                for ramvals in init["ram"]:
+                    nes.setSSTRam(ramvals[0], ramvals[1])
+                nes.SSTStep()
+                final = entry["final"]
+                a, x, y, pc, sp, flags = nes.readRegs()
+                if a != final["a"]:
+                    raise Exception(f"In test for opcode 0x{inst:02x}, a={a} when {final["a"]} was expected")
+                if x != final["x"]:
+                    raise Exception(f"In test for opcode 0x{inst:02x}, x={x} when {final["x"]} was expected")
+                if y != final["y"]:
+                    raise Exception(f"In test for opcode 0x{inst:02x}, y={y} when {final["y"]} was expected")
+                if pc != final["pc"]:
+                    raise Exception(f"In test for opcode 0x{inst:02x}, pc={pc} when {final["pc"]} was expected")
+                if sp != final["s"]:
+                    raise Exception(f"In test for opcode 0x{inst:02x}, sp={sp} when {final["s"]} was expected")
+                if flags != final["p"]:
+                    raise Exception(f"In test for opcode 0x{inst:02x}, flags={flags} when {final["p"]} was expected")
+                for ramvals in final["ram"]:
+                    val = nes.readSSTRam(ramvals[0])
+                    if val != ramvals[1]:
+                        raise Exception(f"In test for opcode 0x{inst:02x}, ram[{ramvals[0]}/0x{ramvals[0]:04x}]={val} when {ramvals[1]} was expected")
+            print(f"Instruction 0x{inst:02x} passed!")
+        print("Every official instruction passed!")
+
 menubar = tk.Menu(root)
 root.config(menu=menubar)
 
@@ -86,6 +152,7 @@ menubar.add_cascade(label="Emulator", menu=emulator_menu)
 
 help_menu = tk.Menu(menubar, tearoff=0)
 help_menu.add_command(label="About", command=about)
+help_menu.add_command(label="SST", command=runSSTs)
 menubar.add_cascade(label="Help", menu=help_menu)
 
 root.bind("<KeyPress>",   onKeyDown)

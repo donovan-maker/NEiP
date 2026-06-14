@@ -82,6 +82,9 @@ cdef int Controller2ShiftRegister = 0
 cdef int controller1 = 0
 cdef int controller2 = 0
 
+cdef bool SSTMode = False
+cdef unsigned char SSTRAM[0x10000]
+
 cdef int NROMPRGSize = 0
 
 cpdef writeController1(value):
@@ -91,6 +94,46 @@ cpdef writeController1(value):
 cpdef writeController2(value):
     global controller2
     controller2 = value
+
+cpdef setRegs(a, x, y, pc, sp, flags):
+    global A, X, Y, PC, SP, carry, zero, interruptDisable
+    global decimal, overflow, negative
+    A = a
+    X = x
+    Y = y
+    PC = pc
+    SP = sp
+    carry = (flags&1)!=0
+    zero = (flags&2)!=0
+    interruptDisable = (flags&4)!=0
+    decimal = (flags&8)!=0
+    overflow = (flags&0x40)!=0
+    negative = (flags&0x80)!=0
+
+cpdef readRegs():
+    global A, X, Y, PC, SP, carry, zero, interruptDisable
+    global decimal, overflow, negative
+    flags = 0
+    flags += 1 if carry else 0
+    flags += 2 if zero else 0
+    flags += 4 if interruptDisable else 0
+    flags += 8 if decimal else 0
+    flags += 0 if DoNMI else 0x10
+    flags += 0x20
+    flags += 0x40 if overflow else 0
+    flags += 0x80 if negative else 0
+    return A, X, Y, PC, SP, flags
+
+cpdef setSSTRam(pos, value):
+    global SSTRAM
+    SSTRAM[pos] = value
+
+cpdef readSSTRam(pos):
+    global SSTRAM
+    return SSTRAM[pos]
+
+cpdef SSTStep():
+    emulateCPU()
 
 cdef paletteColorsRaw = [0x65, 0x65, 0x65, 0x00, 0x2A, 0x84, 0x15, 0x13, 0xA2, 0x3A, 0x01, 0x9E, 0x59, 0x00, 0x7A, 0x6A, 0x00, 0x3E, 0x68, 0x08, 0x00, 0x53, 0x1D, 0x00, 0x32, 0x34, 0x00, 0x0D, 0x46, 0x00, 0x00, 0x4F, 0x00, 0x00, 0x4C, 0x09, 0x00, 0x3F, 0x4B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xAE, 0xAE, 0xAE, 0x17, 0x5F, 0xD6, 0x43, 0x41, 0xFF, 0x75, 0x29, 0xFA, 0x9E, 0x1D, 0xCA, 0xB4, 0x20, 0x7B, 0xB1, 0x33, 0x22, 0x96, 0x4E, 0x00, 0x6A, 0x6C, 0x00, 0x39, 0x84, 0x00, 0x0F, 0x90, 0x00, 0x00, 0x8D, 0x33, 0x00, 0x7B, 0x8C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFE, 0xFE, 0xFE, 0x66, 0xAF, 0xFF, 0x93, 0x90, 0xFF, 0xC5, 0x78, 0xFF, 0xEE, 0x6C, 0xFF, 0xFF, 0x6F, 0xCA, 0xFF, 0x82, 0x71, 0xE6, 0x9E, 0x25, 0xBA, 0xBC, 0x00, 0x88, 0xD5, 0x01, 0x5E, 0xE1, 0x32, 0x47, 0xDD, 0x82, 0x4A, 0xCB, 0xDC, 0x4E, 0x4E, 0x4E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFE, 0xFE, 0xFE, 0xC0, 0xDE, 0xFF, 0xD2, 0xD1, 0xFF, 0xE7, 0xC7, 0xFF, 0xF8, 0xC2, 0xFF, 0xFF, 0xC3, 0xE9, 0xFF, 0xCB, 0xC4, 0xF5, 0xD7, 0xA5, 0xE2, 0xE3, 0x94, 0xCE, 0xED, 0x96, 0xBC, 0xF2, 0xAA, 0xB3, 0xF1, 0xCB, 0xB4, 0xE9, 0xF0, 0xB6, 0xB6, 0xB6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
 cdef unsigned char paletteColorsC[64*3]
@@ -140,7 +183,10 @@ cdef read(address):
     global PPUVRAMAddress, ROM, PPUStatusOverflow
     global PPUStatusSprZeroHit, Controller1ShiftRegister
     global Controller2ShiftRegister, NROMPRGSize
+    global SSTMode, SSTRAM
     address &= 0xFFFF
+    if SSTMode:
+        return SSTRAM[address]
     if address < 0x2000:
         return RAM[address&0x7FF]
     elif address < 0x4000:
@@ -192,9 +238,12 @@ cdef write(address, value):
     global PPUMaskRenderSprites, PPUwriteLatch, PPUScrollFineX
     global PPUtempVRAMAddress, ROMHeader, CHRData, VRAM, PaletteRAM
     global Controller1ShiftRegister, Controller2ShiftRegister
-    global controller1, controller2
+    global controller1, controller2, SSTMode, SSTRAM
     address &= 0xFFFF
     value &= 0xFF
+    if SSTMode:
+        SSTRAM[address] = value
+        return
     if address < 0x2000:
         RAM[address&0x7FF] = value
     elif address < 0x4000:
@@ -458,7 +507,7 @@ cdef Xindexed():
     return ((read(tempAddr)<<8)|addr)&0xFFFF
 
 cdef emulateCPU():
-    global previousNMILevelDetector, NMILevelDetector, DoNMI
+    global previousNMILevelDetector, NMILevelDetector, DoNMI, SSTMode
     global A, X, Y, PC, SP, carry, zero, interruptDisable, decimal, overflow
     global cycles, CPUHalted, negative, PPUDot, PPUScanline, frames
     previousNMILevelDetector = NMILevelDetector
@@ -1094,10 +1143,11 @@ cdef emulateCPU():
         cycles += 7
     else:
         raise Exception(f"Unknown opcode of 0x{opcode:02x} at PC=0x{PC-1:04x}")
-    for _ in range(cycles-oldcycles):
-        emulatePPU()
-        emulatePPU()
-        emulatePPU()
+    if not SSTMode:
+        for _ in range(cycles-oldcycles):
+            emulatePPU()
+            emulatePPU()
+            emulatePPU()
     A &= 0xFF
     X &= 0xFF
     Y &= 0xFF

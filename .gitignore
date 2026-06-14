@@ -8,3 +8,6 @@ build
 
 # roms
 *.nes
+
+# sst
+SSTs
