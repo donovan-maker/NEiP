@@ -160,6 +160,118 @@ cpdef get_frames():
     global frames
     return frames
 
+cpdef fullReset():
+    global PC, SP, A, X, Y
+    global CPUHalted, drawNewFrame, frames
+    global carry, zero, interruptDisable, decimal
+    global overflow, negative
+    global PPUwriteLatch, PPUtransferAddress, PPUVRAMAddress
+    global PPUVRAMInc32, PPUReadBuffer, PPUDot, PPUScanline
+    global PPUVBlank, PPUMask8pxMaskBG, PPUMask8pxMaskSprites
+    global PPUMaskRenderBG, PPUMaskRenderSprites
+    global PPUNametableSelect, PPUSpritePatternTable
+    global PPUBGPatternTable, PPUUse8x16Sprites, PPUEnableNMI
+    global NMILevelDetector, DoNMI, previousNMILevelDetector
+    global PPUShiftRegisterPatternH, PPUShiftRegisterPatternL
+    global PPUShiftRegisterAttributeH, PPUShiftRegisterAttributeL
+    global PPU8StepPatternLowBitPlane, PPU8StepPatternHighBitPlane
+    global PPU8StepAttribute, PPUAddressBus, PPU8StepTemp
+    global PPU8StepNextCharacter, PPUScrollFineX, PPUtempVRAMAddress
+    global PPUSpriteEvalTemp, PPUSecondaryOAMAddress
+    global PPUSecondaryOAMFull, PPUOAMAddress, PPUSpriteEvalTick
+    global PPUStatusOverflow, PPUStatusSprZeroHit
+    global PPUScanlineContainsSpriteZero
+    global PPUSpriteEvaluationOAMOverflowed, PPUSecondaryOAMSize
+    global Controller1ShiftRegister, Controller2ShiftRegister
+    global Controller1, Controller2
+    global RAM, VRAM, PaletteRAM, OAM, SecondaryOAM
+    global ROM, ROMHeader, CHRData
+    global PPUSpriteShiftRegisterL, PPUSpriteShiftRegisterH
+    global PPUSpriteAttribute, PPUSpritePattern
+    global PPUSpriteXPosition, PPUSpriteYPosition
+    PC = 0xFFFC
+    SP = 0xFD
+    A = 0
+    X = 0
+    Y = 0
+
+    CPUHalted = False
+    drawNewFrame = False
+    frames = 0
+
+    carry = False
+    zero = False
+    interruptDisable = True
+    decimal = False
+    overflow = False
+    negative = False
+
+    PPUwriteLatch = False
+    PPUtransferAddress = 0
+    PPUVRAMAddress = 0
+    PPUVRAMInc32 = False
+    PPUReadBuffer = 0
+    PPUDot = 0
+    PPUScanline = 0
+    PPUVBlank = False
+    PPUMask8pxMaskBG = False
+    PPUMask8pxMaskSprites = False
+    PPUMaskRenderBG = False
+    PPUMaskRenderSprites = False
+    PPUNametableSelect = 0
+    PPUSpritePatternTable = False
+    PPUBGPatternTable = False
+    PPUUse8x16Sprites = False
+    PPUEnableNMI = False
+    NMILevelDetector = False
+    DoNMI = False
+    previousNMILevelDetector = False
+    PPUShiftRegisterPatternL = 0
+    PPUShiftRegisterPatternH = 0
+    PPUShiftRegisterAttributeL = 0
+    PPUShiftRegisterAttributeH = 0
+    PPU8StepPatternLowBitPlane = 0
+    PPU8StepPatternHighBitPlane = 0
+    PPU8StepAttribute = 0
+    PPUAddressBus = 0
+    PPU8StepTemp = 0
+    PPU8StepNextCharacter = 0
+    PPUScrollFineX = 0
+    PPUtempVRAMAddress = 0
+    PPUSpriteEvalTemp = 0
+    PPUSecondaryOAMAddress = 0
+    PPUSecondaryOAMFull = False
+    PPUOAMAddress = 0
+    PPUSpriteEvalTick = 0
+    PPUStatusOverflow = False
+    PPUStatusSprZeroHit = False
+    PPUScanlineContainsSpriteZero = False
+    PPUSpriteEvaluationOAMOverflowed = False
+    PPUSecondaryOAMSize = 0
+
+    Controller1ShiftRegister = 0
+    Controller2ShiftRegister = 0
+    controller1 = 0
+    controller2 = 0
+
+    for i in range(0x800):
+        RAM[i] = 0xFF
+        VRAM[i] = 0
+    for i in range(0x20):
+        PaletteRAM[i] = 0
+        SecondaryOAM[i] = 0
+    for i in range(0x100):
+        OAM[i] = 0
+    for i in range(8):
+        PPUSpriteShiftRegisterL[i] = 0
+        PPUSpriteShiftRegisterH[i] = 0
+        PPUSpriteAttribute[i] = 0
+        PPUSpritePattern[i] = 0
+        PPUSpriteXPosition[i] = 0
+        PPUSpriteYPosition[i] = 0
+    
+    clearSSTMode()
+
 cpdef loadRom(path):
     global ROMHeader, ROM, CHRData
     global NROMPRGSize

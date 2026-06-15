@@ -59,6 +59,12 @@ def openRom():
     if path:
         # Do the stop/start in a background thread so Tkinter doesn't freeze
         threading.Thread(target=startEmuThread, args=(path,), daemon=True).start()
+        powerCycle()
+
+def powerCycle():
+    with nes_lock:
+        nes.fullReset()
+        nes.reset()
 
 def resetNes():
     with nes_lock:
@@ -154,6 +160,7 @@ menubar.add_cascade(label="File", menu=file_menu)
 
 emulator_menu = tk.Menu(menubar, tearoff=0)
 emulator_menu.add_command(label="Reset", accelerator="Ctrl+R", command=resetNes)
+emulator_menu.add_command(label="Power Cycle", command=powerCycle)
 menubar.add_cascade(label="Emulator", menu=emulator_menu)
 
 help_menu = tk.Menu(menubar, tearoff=0)
