@@ -1434,7 +1434,7 @@ cdef emulatePPU():
                         PPUVRAMAddress += 1
     
     if PPUMaskRenderBG or PPUMaskRenderSprites:
-        if PPUDot == 256:
+        if PPUDot == 256 and PPUScanline < 240:
             PPUIncrementScrollY()
         elif PPUDot == 257:
             PPUResetXScroll()
