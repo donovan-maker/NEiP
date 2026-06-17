@@ -7,6 +7,7 @@ import pygame
 import nes
 import os
 import json
+import nesAudio
 
 SCREEN_W, SCREEN_H = 512, 480
 
@@ -65,14 +66,17 @@ def powerCycle():
     with nes_lock:
         nes.fullReset()
         nes.reset()
+        nesAudio.reset()
 
 def resetNes():
     with nes_lock:
         nes.reset()
+        nesAudio.reset()
 
 def quitApp():
     running.clear()
     root.after(200, root.destroy)
+    nesAudio.quit()
 
 def about():
     messagebox.showinfo("About NEiP:", "NEiP stands for NES Emulator in Python.\nCreated by Donovan Black (FloppyDisk) in 2026.")
@@ -188,6 +192,8 @@ screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
 clock  = pygame.time.Clock()
 screen.fill((0, 0, 0))
 pygame.display.flip()
+
+nesAudio.init()
 
 CONTROLLER_MAP = {
     "x":         0x80,

@@ -1,3 +1,5 @@
+import numpy as np
+
 cdef int PC = 0
 cdef unsigned char SP = 0
 cdef int A = 0
@@ -82,6 +84,42 @@ cdef bool SSTMode = False
 cdef unsigned char SSTRAM[0x10000]
 
 cdef int NROMPRGSize = 0
+
+DEF BUF_SIZE = 8192
+
+cdef float _audio_buf[BUF_SIZE]
+cdef int _audio_wr = 0
+cdef int _audio_rd = 0
+
+cdef inline int audio_push(float sample) nogil:
+    global _audio_wr, _audio_buf, _audio_rd
+    cdef int next_wr = (_audio_wr + 1) & 0x1FFF
+    if next_wr == (_audio_rd & 0x1FFF):
+        return 0
+    _audio_buf[_audio_wr & 0x1FFF] = sample
+    _audio_wr = next_wr
+    return 1
+
+cpdef audio_drain(int n_samples):
+    global _audio_rd, _audio_wr, _audio_buf
+    cdef int i
+    out = np.zeros(n_samples, dtype=np.float32)
+    cdef float[:] view = out
+    for i in range(n_samples):
+        if _audio_wr == _audio_rd:
+            view[i] = 0.0
+        else:
+            view[i] = _audio_buf[_audio_rd & 0x1FFF]
+            _audio_rd = (_audio_rd + 1) & 0x1FFF
+    return out
+
+cpdef audio_reset():
+    global _audio_wr, _audio_rd, _audio_buf
+    cdef int i
+    _audio_wr = 0
+    _audio_rd = 0
+    for i in range(BUF_SIZE):
+        _audio_buf[i] = 0.0
 
 cpdef writeController1(value):
     global controller1
@@ -293,12 +331,13 @@ cpdef reset():
 
     cycles = 0
 
-cdef read(address):
+cdef int read(int address):
     global RAM, PPUVBlank, PPUwriteLatch, PPUReadBuffer
     global PPUVRAMAddress, ROM, PPUStatusOverflow
     global PPUStatusSprZeroHit, Controller1ShiftRegister
     global Controller2ShiftRegister, NROMPRGSize
     global SSTMode, SSTRAM
+    cdef int temp, ppustatus, controllerBit
     address &= 0xFFFF
     if SSTMode:
         return SSTRAM[address]
@@ -346,7 +385,7 @@ cdef read(address):
     else:
         return 0
 
-cdef write(address, value):
+cdef void write(int address, int value):
     global RAM, PPUNametableSelect, PPUVRAMInc32, PPUSpritePatternTable
     global PPUBGPatternTable, PPUUse8x16Sprites, PPUEnableNMI, PPUVRAMAddress
     global PPUMask8pxMaskBG, PPUMask8pxMaskSprites, PPUMaskRenderBG
@@ -354,6 +393,7 @@ cdef write(address, value):
     global PPUtempVRAMAddress, ROMHeader, CHRData, VRAM, PaletteRAM
     global Controller1ShiftRegister, Controller2ShiftRegister
     global controller1, controller2, SSTMode, SSTRAM
+    cdef int i
     address &= 0xFFFF
     value &= 0xFF
     if SSTMode:
@@ -439,7 +479,7 @@ cdef write(address, value):
         Controller1ShiftRegister = controller1
         Controller2ShiftRegister = controller2
 
-cdef ReadPPU(address):
+cdef int ReadPPU(int address):
     global VRAM, ROMHeader, PaletteRAM
     if address < 0x2000:
         return CHRData[address]
@@ -454,23 +494,24 @@ cdef ReadPPU(address):
         else:
             return PaletteRAM[address&0x1F]
 
-cdef push(value):
+cdef void push(int value):
     global SP
     value &= 0xFF
     write(0x100+SP, value)
     SP = SP-1
 
-cdef pushWord(value):
+cdef void pushWord(int value):
     value &= 0xFFFF
     push(value>>8)
     push(value&0xFF)
 
-cdef pull():
+cdef int pull():
     global SP
     SP = SP+1
     return read(0x100+SP)
 
-cdef pullWord():
+cdef int pullWord():
+    cdef int low, high
     low = pull()
     high = pull()
     return (high<<8)|low
@@ -484,23 +525,25 @@ cpdef run():
             break
     frames += 1
 
-cdef readPCByte():
+cdef int readPCByte():
     global PC
     PC = PC+1
     return read(PC-1)
 
-cdef readPCWord():
+cdef int readPCWord():
+    cdef int low
     low = readPCByte()
     return (readPCByte()<<8)|low
 
-cdef ZNFlags(value):
+cdef void ZNFlags(int value):
     global zero, negative
     value &= 0xFF
     zero = value == 0
     negative = value > 127
 
-cdef branch(to, condition):
+cdef void branch(int to, bool condition):
     global PC, cycles
+    cdef int oldPC
     if condition:
         to &= 0xFF
         oldPC = PC
@@ -513,15 +556,16 @@ cdef branch(to, condition):
     else:
         cycles += 2
 
-cdef asl(value):
+cdef int asl(int value):
     global carry
     carry = value > 127
     value <<= 1
     ZNFlags(value)
     return value
 
-cdef rol(value):
+cdef int rol(int value):
     global carry
+    cdef bool futureCarry
     futureCarry = value > 127
     value <<= 1
     if carry:
@@ -530,15 +574,16 @@ cdef rol(value):
     ZNFlags(value)
     return value
 
-cdef lsr(value):
+cdef int lsr(int value):
     global carry
     carry = (value&1) != 0
     value >>= 1
     ZNFlags(value)
     return value
 
-cdef ror(value):
+cdef int ror(int value):
     global carry
+    cdef bool futureCarry
     futureCarry = (value&1) != 0
     value >>= 1
     if carry:
@@ -547,63 +592,66 @@ cdef ror(value):
     ZNFlags(value)
     return value
 
-cdef inc(value):
+cdef int inc(int value):
     value += 1
     value &= 0xFF
     ZNFlags(value)
     return value
 
-cdef dec(value):
+cdef int dec(int value):
     value -= 1
     value &= 0xFF
     ZNFlags(value)
     return value
 
-cdef ora(value):
+cdef void ora(int value):
     global A
     A = A | value
     ZNFlags(A)
 
-cdef andop(value):
+cdef void andop(int value):
     global A
     A = A & value
     ZNFlags(A)
 
-cdef eor(value):
+cdef void eor(int value):
     global A
     A = A ^ value
     ZNFlags(A)
 
-cdef adc(value):
+cdef void adc(int value):
     global A, overflow, carry
+    cdef int intSum
     intSum = value + A + (1 if carry else 0)
     overflow = (~(A^value)&(A^intSum)&0x80) != 0
     carry = intSum > 0xFF
     A = intSum&0xFF
     ZNFlags(A)
 
-cdef sbc(value):
+cdef void sbc(int value):
     global A, overflow, carry
+    cdef int intSum
     intSum = A - value - (0 if carry else 1)
     overflow = ((A^value)&(A^intSum)&0x80) != 0
     carry = intSum >= 0
     A = intSum&0xFF
     ZNFlags(A)
 
-cdef cmp(value, reg):
+cdef void cmp(int value, int reg):
     global carry, zero, negative
     carry = value <= reg
     zero = value == reg
     negative = ((reg-value)&0xFF) > 127
 
-cdef bit(value):
+cdef void bit(int value):
     global zero, negative, overflow
     zero = (A&value) == 0
     negative = (value&0x80) != 0
     overflow = (value&0x40) != 0
 
-cdef Yindexed():
+cdef int Yindexed():
     global Y
+    cdef int tempAddr, addr
     addr = readPCByte()
     tempAddr = addr
     addr = read(tempAddr)
@@ -612,8 +660,9 @@ cdef Yindexed():
     addr = ((read(tempAddr)<<8)|addr)&0xFFFF
     return addr + Y
 
-cdef Xindexed():
+cdef int Xindexed():
     global X
+    cdef int tempAddr, addr
     addr = (readPCByte()+X)&0xFF
     tempAddr = addr
     addr = read(tempAddr)
@@ -621,25 +670,22 @@ cdef Xindexed():
     tempAddr &= 0xFF
     return ((read(tempAddr)<<8)|addr)&0xFFFF
 
-cdef emulateCPU():
+cdef void emulateCPU():
     global previousNMILevelDetector, NMILevelDetector, DoNMI, SSTMode
     global A, X, Y, PC, SP, carry, zero, interruptDisable, decimal, overflow
     global cycles, CPUHalted, negative, PPUDot, PPUScanline, frames
+    cdef int opcode
     previousNMILevelDetector = NMILevelDetector
     NMILevelDetector = PPUEnableNMI and PPUVBlank
     if (not previousNMILevelDetector) and NMILevelDetector:
         DoNMI = True
     if not DoNMI:
         opcode = readPCByte()
-        #print(f"{opcode:02x} {readPCByte():02x} {readPCByte():02x}")
-        #PC = PC-2
     else:
         opcode = 0x00
     cdef int oldcycles = cycles
-    cdef int temp
-    cdef int address
-    cdef int tempLow
-    cdef int tempHigh
+    cdef int temp, address, tempLow, tempHigh
+    cdef int low, high, i
     if opcode == 0x00:
         # BRK
         if not DoNMI:
@@ -1338,17 +1384,29 @@ cdef emulateCPU():
     else:
         raise Exception(f"Unknown opcode of 0x{opcode:02x} at PC=0x{PC-1:04x}")
     if not SSTMode:
-        for _ in range(cycles-oldcycles):
+        for i in range(cycles-oldcycles):
             emulatePPU()
             emulatePPU()
             emulatePPU()
+            if ((oldcycles+i)%2) == 0:
+                # APU ticks every other CPU cycle
+                emulateAPU()
     A &= 0xFF
     X &= 0xFF
     Y &= 0xFF
     PC &= 0xFFFF
     SP &= 0xFF
 
-cdef emulatePPU():
+cdef int emulateAPU() nogil:
+    global cycles
+    cdef float value # Value will have the final speaker voltage from -1.0 to 1.0
+    # value = 1.0 if (cycles%1024) >= 512 else 0.0
+    # This makes a deafening sound, but proves it works
+    value = 0.0
+    audio_push(value)
+    return 0
+
+cdef void emulatePPU():
     global PPUDot, PPUScanline, PPUVBlank, drawNewFrame
     global PPUMaskRenderBG, PPUMaskRenderSprites
     global PPUShiftRegisterPatternL, PPUShiftRegisterPatternH
@@ -1364,7 +1422,8 @@ cdef emulatePPU():
     global PPUScanlineContainsSpriteZero
     cdef int cycleTick, PalLow, PalHi, col0, col1
     cdef int pal0, pal1, color_idx, fb_idx
-    cdef (unsigned char, unsigned char, unsigned char) color
+    cdef int SpritePalHi, SpritePalLow, SpixelL, SpixelH
+    cdef bool SpritePriority
     if (PPUMaskRenderBG or PPUMaskRenderSprites) and (PPUScanline < 240 or PPUScanline == 261):
         spriteEvaluation()
 
@@ -1491,7 +1550,7 @@ cdef emulatePPU():
         if PPUScanline > 261:
             PPUScanline = 0
 
-cdef spriteEvaluation():
+cdef void spriteEvaluation():
     global PPUDot, PPUSpriteEvalTemp, SecondaryOAM, PPUSecondaryOAMSize
     global PPUScanline, PPUSecondaryOAMAddress, PPUSecondaryOAMFull, OAM
     global PPUSpriteEvalTick, PPUOAMAddress, PPUUse8x16Sprites, PPUStatusOverflow
@@ -1602,7 +1661,7 @@ cdef spriteEvaluation():
         PPUSpriteEvalTick += 1
         PPUSpriteEvalTick &= 7
 
-cdef PPUIncrementScrollY():
+cdef void PPUIncrementScrollY():
     global PPUVRAMAddress
     cdef int y
     if (PPUVRAMAddress&0x7000) != 0x7000:
@@ -1618,10 +1677,10 @@ cdef PPUIncrementScrollY():
             y &= 0x1F
         PPUVRAMAddress = ((PPUVRAMAddress&0xFC1F)|(y<<5))&0xFFFF
 
-cdef PPUResetXScroll():
+cdef void PPUResetXScroll():
     global PPUVRAMAddress, PPUtempVRAMAddress
     PPUVRAMAddress = ((PPUVRAMAddress & ~0x041F) | (PPUtempVRAMAddress & 0x041F)) & 0xFFFF
 
-cdef PPUResetYScroll():
+cdef void PPUResetYScroll():
     global PPUVRAMAddress, PPUtempVRAMAddress
     PPUVRAMAddress = ((PPUVRAMAddress & 0x041F) | (PPUtempVRAMAddress & ~0x041F)) & 0xFFFF
