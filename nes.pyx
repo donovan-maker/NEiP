@@ -1,3 +1,5 @@
+# cython: cdivision=True
+
 import numpy as np
 
 cdef int PC = 0
@@ -80,46 +82,27 @@ cdef int Controller2ShiftRegister = 0
 cdef int controller1 = 0
 cdef int controller2 = 0
 
+cdef int APUPulse1Waveform = 0
+cdef int APUPulse1Timer = 0
+cdef int APUPulse1TimerReset = 0
+cdef int APUPulse2Waveform = 0
+cdef int APUPulse2Timer = 0
+cdef int APUPulse2TimerReset = 0
+
+cdef list audioBatch = []
+
+cpdef list drainAudioBuffer():
+    global audioBatch
+    cdef list out = audioBatch
+    audioBatch = []
+    return out
+
 cdef bool SSTMode = False
 cdef unsigned char SSTRAM[0x10000]
 
 cdef int NROMPRGSize = 0
 
-DEF BUF_SIZE = 8192
-
-cdef float _audio_buf[BUF_SIZE]
-cdef int _audio_wr = 0
-cdef int _audio_rd = 0
-
-cdef inline int audio_push(float sample) nogil:
-    global _audio_wr, _audio_buf, _audio_rd
-    cdef int next_wr = (_audio_wr + 1) & 0x1FFF
-    if next_wr == (_audio_rd & 0x1FFF):
-        return 0
-    _audio_buf[_audio_wr & 0x1FFF] = sample
-    _audio_wr = next_wr
-    return 1
-
-cpdef audio_drain(int n_samples):
-    global _audio_rd, _audio_wr, _audio_buf
-    cdef int i
-    out = np.zeros(n_samples, dtype=np.float32)
-    cdef float[:] view = out
-    for i in range(n_samples):
-        if _audio_wr == _audio_rd:
-            view[i] = 0.0
-        else:
-            view[i] = _audio_buf[_audio_rd & 0x1FFF]
-            _audio_rd = (_audio_rd + 1) & 0x1FFF
-    return out
-
-cpdef audio_reset():
-    global _audio_wr, _audio_rd, _audio_buf
-    cdef int i
-    _audio_wr = 0
-    _audio_rd = 0
-    for i in range(BUF_SIZE):
-        _audio_buf[i] = 0.0
+cdef float APUFinalValue = 0.0
 
 cpdef writeController1(value):
     global controller1
@@ -227,6 +210,8 @@ cpdef fullReset():
     global PPUSpriteShiftRegisterL, PPUSpriteShiftRegisterH
     global PPUSpriteAttribute, PPUSpritePattern
     global PPUSpriteXPosition, PPUSpriteYPosition
+    global APUPulse1Waveform, APUPulse1Timer, APUPulse1TimerReset
+    global APUPulse2Waveform, APUPulse2Timer, APUPulse2TimerReset
     PC = 0xFFFC
     SP = 0xFD
     A = 0
@@ -308,6 +293,13 @@ cpdef fullReset():
         PPUSpriteXPosition[i] = 0
         PPUSpriteYPosition[i] = 0
     
+    APUPulse1Waveform = 0
+    APUPulse1Timer = 0
+    APUPulse1TimerReset = 0
+    APUPulse2Waveform = 0
+    APUPulse2Timer = 0
+    APUPulse2TimerReset = 0
+    
     clearSSTMode()
 
 cpdef loadRom(path):
@@ -325,9 +317,18 @@ cpdef loadRom(path):
 
 cpdef reset():
     global PC, SP, interruptDisable, cycles
+    global APUPulse1Waveform, APUPulse1Timer, APUPulse1TimerReset
+    global APUPulse2Waveform, APUPulse2Timer, APUPulse2TimerReset
     PC = (read(0xFFFD)<<8)|read(0xFFFC)
     SP = 0xFD
     interruptDisable = True
+
+    APUPulse1Waveform = 0
+    APUPulse1Timer = 0
+    APUPulse1TimerReset = 0
+    APUPulse2Waveform = 0
+    APUPulse2Timer = 0
+    APUPulse2TimerReset = 0
 
     cycles = 0
 
@@ -393,7 +394,9 @@ cdef void write(int address, int value):
     global PPUtempVRAMAddress, ROMHeader, CHRData, VRAM, PaletteRAM
     global Controller1ShiftRegister, Controller2ShiftRegister
     global controller1, controller2, SSTMode, SSTRAM
-    cdef int i
+    global APUPulse1Waveform, APUPulse1Timer, APUPulse1TimerReset
+    global APUPulse2Waveform, APUPulse2Timer, APUPulse2TimerReset
+    cdef int i, dutyCycle
     address &= 0xFFFF
     value &= 0xFF
     if SSTMode:
@@ -468,6 +471,38 @@ cdef void write(int address, int value):
             else:
                 PPUVRAMAddress += 1
             PPUVRAMAddress &= 0x3FFF
+    elif address == 0x4000:
+        dutyCycle = value>>6
+        if dutyCycle == 0:
+            APUPulse1Waveform = 0b00000001
+        elif dutyCycle == 1:
+            APUPulse1Waveform = 0b00000011
+        elif dutyCycle == 2:
+            APUPulse1Waveform = 0b00001111
+        else:
+            APUPulse1Waveform = 0b11111100
+    elif address == 0x4002:
+        APUPulse1TimerReset = (APUPulse1TimerReset&0x700)|value
+        APUPulse1Timer = APUPulse1TimerReset
+    elif address == 0x4003:
+        APUPulse1TimerReset = ((value&7)<<8)|(APUPulse1TimerReset&0xFF)
+        APUPulse1Timer = APUPulse1TimerReset
+    elif address == 0x4004:
+        dutyCycle = value>>6
+        if dutyCycle == 0:
+            APUPulse2Waveform = 0b00000001
+        elif dutyCycle == 1:
+            APUPulse2Waveform = 0b00000011
+        elif dutyCycle == 2:
+            APUPulse2Waveform = 0b00001111
+        else:
+            APUPulse2Waveform = 0b11111100
+    elif address == 0x4006:
+        APUPulse2TimerReset = (APUPulse2TimerReset&0x700)|value
+        APUPulse2Timer = APUPulse2TimerReset
+    elif address == 0x4007:
+        APUPulse2TimerReset = ((value&7)<<8)|(APUPulse2TimerReset&0xFF)
+        APUPulse2Timer = APUPulse2TimerReset
     elif address == 0x4014:
         # OAM DMA
         # This is an extreme corner cut
@@ -1397,14 +1432,33 @@ cdef void emulateCPU():
     PC &= 0xFFFF
     SP &= 0xFF
 
-cdef int emulateAPU() nogil:
-    global cycles
-    cdef float value # Value will have the final speaker voltage from -1.0 to 1.0
-    # value = 1.0 if (cycles%1024) >= 512 else 0.0
-    # This makes a deafening sound, but proves it works
-    value = 0.0
-    audio_push(value)
-    return 0
+cdef void emulateAPU():
+    global APUPulse1Timer, APUPulse1TimerReset, APUPulse1Waveform
+    global APUPulse2Timer, APUPulse2TimerReset, APUPulse2Waveform
+    global APUFinalValue, _audioBatch
+    cdef float pulse1, pulse2
+
+    if APUPulse1TimerReset >= 8:
+        if APUPulse1Timer == 0:
+            APUPulse1Timer = APUPulse1TimerReset
+            APUPulse1Waveform = ((APUPulse1Waveform << 1) & 0xFF) | (APUPulse1Waveform >> 7)
+        else:
+            APUPulse1Timer -= 1
+        pulse1 = 1.0 if (APUPulse1Waveform & 0x80) != 0 else 0.0
+    else:
+        pulse1 = 0.0
+    if APUPulse2TimerReset >= 8:
+        if APUPulse2Timer == 0:
+            APUPulse2Timer = APUPulse2TimerReset
+            APUPulse2Waveform = ((APUPulse2Waveform << 1) & 0xFF) | (APUPulse2Waveform >> 7)
+        else:
+            APUPulse2Timer -= 1
+        pulse2 = 1.0 if (APUPulse2Waveform & 0x80) != 0 else 0.0
+    else:
+        pulse2 = 0.0
+
+    APUFinalValue = (pulse1+pulse2)/2.0
+    audioBatch.append(APUFinalValue)
 
 cdef void emulatePPU():
     global PPUDot, PPUScanline, PPUVBlank, drawNewFrame

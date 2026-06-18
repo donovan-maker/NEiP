@@ -7,7 +7,27 @@ import pygame
 import nes
 import os
 import json
-import nesAudio
+import sounddevice as sd
+import collections
+
+SAMPLE_RATE = 44100
+BLOCK_SIZE = 735
+NES_APU_RATE = 1789773 / 2
+
+audioBuffer = collections.deque(maxlen=BLOCK_SIZE * 2)
+audioLock = threading.Lock()
+
+def audioCallback(outdata, frames, time_info, status):
+    with audioLock:
+        available = len(audioBuffer)
+        for i in range(frames):
+            if audioBuffer:
+                outdata[i, 0] = audioBuffer.popleft()
+            else:
+                outdata[i, 0] = 0.0
+
+audioStream = sd.OutputStream(samplerate=SAMPLE_RATE, blocksize=BLOCK_SIZE, channels=1, dtype='float32', callback=audioCallback,)
+audioStream.start()
 
 SCREEN_W, SCREEN_H = 512, 480
 
@@ -66,17 +86,16 @@ def powerCycle():
     with nes_lock:
         nes.fullReset()
         nes.reset()
-        nesAudio.reset()
 
 def resetNes():
     with nes_lock:
         nes.reset()
-        nesAudio.reset()
 
 def quitApp():
     running.clear()
+    audioStream.stop()
+    audioStream.close()
     root.after(200, root.destroy)
-    nesAudio.quit()
 
 def about():
     messagebox.showinfo("About NEiP:", "NEiP stands for NES Emulator in Python.\nCreated by Donovan Black (FloppyDisk) in 2026.")
@@ -193,8 +212,6 @@ clock  = pygame.time.Clock()
 screen.fill((0, 0, 0))
 pygame.display.flip()
 
-nesAudio.init()
-
 CONTROLLER_MAP = {
     "x":         0x80,
     "z":         0x40,
@@ -210,7 +227,7 @@ def setTitle(fps):
     root.title(f"NEiP - {fps:.1f} fps")
 
 def emuThread():
-    fb = nes.getFrameBuffer()   # fetch after loadRom so pointer is fresh
+    fb = nes.getFrameBuffer()
 
     while running.is_set():
         c1 = 0
@@ -219,10 +236,12 @@ def emuThread():
                 if keysym in heldKeys:
                     c1 |= bit
 
+        rawSamples = []
         try:
             with nes_lock:
                 nes.writeController1(c1)
                 nes.run()
+                rawSamples = nes.drainAudioBuffer()
         except Exception as e:
             print(f"[NEiP] Emulator crashed: {e}")
             print("Note: If two unknown opcodes were reported take the first one only")
@@ -230,6 +249,15 @@ def emuThread():
             pygame.display.flip()
             root.after(0, setTitle, 0)
             return
+
+        if rawSamples:
+            ratio = len(rawSamples) / BLOCK_SIZE
+            downsampled = [
+                rawSamples[int(i * ratio)]
+                for i in range(min(BLOCK_SIZE, len(rawSamples)))
+            ]
+            with audioLock:
+                audioBuffer.extend(downsampled)
 
         pygame.event.pump()
 
