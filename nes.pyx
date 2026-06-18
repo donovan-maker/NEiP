@@ -82,12 +82,25 @@ cdef int Controller2ShiftRegister = 0
 cdef int controller1 = 0
 cdef int controller2 = 0
 
+cdef bool APUIRQEnabled = False
+
+cdef bool APUFrameMode5 = False
+cdef bool APUFrameIRQEnable = False
+cdef int APUFrameCount = 0
 cdef int APUPulse1Waveform = 0
 cdef int APUPulse1Timer = 0
 cdef int APUPulse1TimerReset = 0
+cdef int APUPulse1Length = 0
+cdef bool APUPulse1ClockEn = False
+cdef bool APUPulse1Enable = False
 cdef int APUPulse2Waveform = 0
 cdef int APUPulse2Timer = 0
 cdef int APUPulse2TimerReset = 0
+cdef int APUPulse2Length = 0
+cdef bool APUPulse2ClockEn = False
+cdef bool APUPulse2Enable = False
+
+cdef list APULengthValues = [10,254,20,2,40,4,80,6,160,8,60,10,14,12,26,14,12,16,24,18,48,20,96,22,192,24,72,26,16,28,32,30]
 
 cdef list audioBatch = []
 
@@ -205,13 +218,17 @@ cpdef fullReset():
     global PPUSpriteEvaluationOAMOverflowed, PPUSecondaryOAMSize
     global Controller1ShiftRegister, Controller2ShiftRegister
     global Controller1, Controller2
+    global APUIRQEnabled
     global RAM, VRAM, PaletteRAM, OAM, SecondaryOAM
     global ROM, ROMHeader, CHRData
     global PPUSpriteShiftRegisterL, PPUSpriteShiftRegisterH
     global PPUSpriteAttribute, PPUSpritePattern
     global PPUSpriteXPosition, PPUSpriteYPosition
+    global APUFrameMode5, APUFrameIRQEnable, APUFrameCount
     global APUPulse1Waveform, APUPulse1Timer, APUPulse1TimerReset
+    global APUPulse1Length, APUPulse1ClockEn, APUPulse1Enable
     global APUPulse2Waveform, APUPulse2Timer, APUPulse2TimerReset
+    global APUPulse2Length, APUPulse2ClockEn, APUPulse2Enable
     PC = 0xFFFC
     SP = 0xFD
     A = 0
@@ -277,6 +294,8 @@ cpdef fullReset():
     controller1 = 0
     controller2 = 0
 
+    APUIRQEnabled = False
+
     for i in range(0x800):
         RAM[i] = 0xFF
         VRAM[i] = 0
@@ -293,12 +312,21 @@ cpdef fullReset():
         PPUSpriteXPosition[i] = 0
         PPUSpriteYPosition[i] = 0
     
+    APUFrameMode5 = False
+    APUFrameIRQEnable = False
+    APUFrameCount = 0
     APUPulse1Waveform = 0
     APUPulse1Timer = 0
     APUPulse1TimerReset = 0
+    APUPulse1Length = 0
+    APUPulse1ClockEn = False
+    APUPulse1Enable = False
     APUPulse2Waveform = 0
     APUPulse2Timer = 0
     APUPulse2TimerReset = 0
+    APUPulse2Length = 0
+    APUPulse2ClockEn = False
+    APUPulse2Enable = False
     
     clearSSTMode()
 
@@ -317,18 +345,18 @@ cpdef loadRom(path):
 
 cpdef reset():
     global PC, SP, interruptDisable, cycles
-    global APUPulse1Waveform, APUPulse1Timer, APUPulse1TimerReset
-    global APUPulse2Waveform, APUPulse2Timer, APUPulse2TimerReset
+    global APUPulse1Enable, APUPulse1ClockEn
+    global APUPulse2Enable, APUPulse2ClockEn
+    global APUFrameCount
     PC = (read(0xFFFD)<<8)|read(0xFFFC)
     SP = 0xFD
     interruptDisable = True
 
-    APUPulse1Waveform = 0
-    APUPulse1Timer = 0
-    APUPulse1TimerReset = 0
-    APUPulse2Waveform = 0
-    APUPulse2Timer = 0
-    APUPulse2TimerReset = 0
+    APUFrameCount = 0
+    APUPulse1Enable = False
+    APUPulse1ClockEn = False
+    APUPulse2Enable = False
+    APUPulse2ClockEn = False
 
     cycles = 0
 
@@ -337,6 +365,7 @@ cdef int read(int address):
     global PPUVRAMAddress, ROM, PPUStatusOverflow
     global PPUStatusSprZeroHit, Controller1ShiftRegister
     global Controller2ShiftRegister, NROMPRGSize
+    global APUPulse1Length, APUPulse2Length
     global SSTMode, SSTRAM
     cdef int temp, ppustatus, controllerBit
     address &= 0xFFFF
@@ -371,6 +400,13 @@ cdef int read(int address):
             return temp
         else:
             return 0
+    elif address == 0x4015:
+        temp = 0
+        if APUPulse1Length > 0:
+            temp |= 1
+        if APUPulse2Length > 0:
+            temp |= 2
+        return temp
     elif address == 0x4016:
         controllerBit = ((Controller1ShiftRegister&0x80)>>7)&0xFF
         Controller1ShiftRegister <<= 1
@@ -393,9 +429,13 @@ cdef void write(int address, int value):
     global PPUMaskRenderSprites, PPUwriteLatch, PPUScrollFineX
     global PPUtempVRAMAddress, ROMHeader, CHRData, VRAM, PaletteRAM
     global Controller1ShiftRegister, Controller2ShiftRegister
-    global controller1, controller2, SSTMode, SSTRAM
+    global controller1, controller2, SSTMode, SSTRAM, APULengthValues
     global APUPulse1Waveform, APUPulse1Timer, APUPulse1TimerReset
     global APUPulse2Waveform, APUPulse2Timer, APUPulse2TimerReset
+    global APUPulse1ClockEn, APUPulse1Length
+    global APUPulse2ClockEn, APUPulse2Length
+    global APUPulse1Enable, APUPulse2Enable
+    global APUFrameMode5, APUFrameIRQEnable, APUFrameCount
     cdef int i, dutyCycle
     address &= 0xFFFF
     value &= 0xFF
@@ -481,12 +521,14 @@ cdef void write(int address, int value):
             APUPulse1Waveform = 0b00001111
         else:
             APUPulse1Waveform = 0b11111100
+        APUPulse1ClockEn = (value&0x20) == 0
     elif address == 0x4002:
         APUPulse1TimerReset = (APUPulse1TimerReset&0x700)|value
         APUPulse1Timer = APUPulse1TimerReset
     elif address == 0x4003:
         APUPulse1TimerReset = ((value&7)<<8)|(APUPulse1TimerReset&0xFF)
         APUPulse1Timer = APUPulse1TimerReset
+        APUPulse1Length = APULengthValues[value>>3]
     elif address == 0x4004:
         dutyCycle = value>>6
         if dutyCycle == 0:
@@ -497,22 +539,31 @@ cdef void write(int address, int value):
             APUPulse2Waveform = 0b00001111
         else:
             APUPulse2Waveform = 0b11111100
+        APUPulse2ClockEn = (value&0x20) == 0
     elif address == 0x4006:
         APUPulse2TimerReset = (APUPulse2TimerReset&0x700)|value
         APUPulse2Timer = APUPulse2TimerReset
     elif address == 0x4007:
         APUPulse2TimerReset = ((value&7)<<8)|(APUPulse2TimerReset&0xFF)
         APUPulse2Timer = APUPulse2TimerReset
+        APUPulse2Length = APULengthValues[value>>3]
     elif address == 0x4014:
         # OAM DMA
         # This is an extreme corner cut
         #  but it works
         for i in range(256):
             OAM[i] = read(((value<<8)+i)&0xFFFF)
+    elif address == 0x4015:
+        APUPulse1Enable = (value&1) != 0
+        APUPulse2Enable = (value&2) != 0
     elif address == 0x4016:
         # Controller
         Controller1ShiftRegister = controller1
         Controller2ShiftRegister = controller2
+    elif address == 0x4017:
+        APUFrameMode5 = (value&0x80) != 0
+        APUFrameIRQEnable = (value&0x40) == 0
+        APUFrameCount = 0
 
 cdef int ReadPPU(int address):
     global VRAM, ROMHeader, PaletteRAM
@@ -709,15 +760,17 @@ cdef void emulateCPU():
     global previousNMILevelDetector, NMILevelDetector, DoNMI, SSTMode
     global A, X, Y, PC, SP, carry, zero, interruptDisable, decimal, overflow
     global cycles, CPUHalted, negative, PPUDot, PPUScanline, frames
+    global APUFrameCount, APUFrameMode5, APUFrameIRQEnable
+    global APUIRQEnabled
     cdef int opcode
     previousNMILevelDetector = NMILevelDetector
     NMILevelDetector = PPUEnableNMI and PPUVBlank
     if (not previousNMILevelDetector) and NMILevelDetector:
         DoNMI = True
-    if not DoNMI:
-        opcode = readPCByte()
-    else:
+    if DoNMI or ((APUIRQEnabled) and (not interruptDisable)):
         opcode = 0x00
+    else:
+        opcode = readPCByte()
     cdef int oldcycles = cycles
     cdef int temp, address, tempLow, tempHigh
     cdef int low, high, i
@@ -1426,36 +1479,58 @@ cdef void emulateCPU():
             if ((oldcycles+i)%2) == 0:
                 # APU ticks every other CPU cycle
                 emulateAPU()
+            if ((oldcycles+i)%7445) == 0:
+                # Every quarter of a frame
+                APUFrameCount += 1
+                if (APUFrameMode5 and (APUFrameCount == 5)) or ((not APUFrameMode5) and (APUFrameCount == 4)):
+                    APUFrameCount = 0
+                    APUIRQEnabled = (not APUFrameMode5) and APUFrameIRQEnable
+                    tickAPULength()
+                if APUFrameCount == 2:
+                    tickAPULength()
     A &= 0xFF
     X &= 0xFF
     Y &= 0xFF
     PC &= 0xFFFF
     SP &= 0xFF
 
+cdef void tickAPULength():
+    global APUPulse1ClockEn, APUPulse1Length
+    global APUPulse2ClockEn, APUPulse2Length
+    if APUPulse1ClockEn and (APUPulse1Length > 0):
+        APUPulse1Length -= 1
+    if APUPulse2ClockEn and (APUPulse2Length > 0):
+        APUPulse2Length -= 1
+
 cdef void emulateAPU():
     global APUPulse1Timer, APUPulse1TimerReset, APUPulse1Waveform
     global APUPulse2Timer, APUPulse2TimerReset, APUPulse2Waveform
+    global APUPulse1Enable, APUPulse2Enable
+    global APUPulse1Length, APUPulse2Length
     global APUFinalValue, _audioBatch
     cdef float pulse1, pulse2
+    pulse1 = 0.0
+    pulse2 = 0.0
 
-    if APUPulse1TimerReset >= 8:
-        if APUPulse1Timer == 0:
-            APUPulse1Timer = APUPulse1TimerReset
-            APUPulse1Waveform = ((APUPulse1Waveform << 1) & 0xFF) | (APUPulse1Waveform >> 7)
-        else:
-            APUPulse1Timer -= 1
-        pulse1 = 1.0 if (APUPulse1Waveform & 0x80) != 0 else 0.0
-    else:
-        pulse1 = 0.0
-    if APUPulse2TimerReset >= 8:
-        if APUPulse2Timer == 0:
-            APUPulse2Timer = APUPulse2TimerReset
-            APUPulse2Waveform = ((APUPulse2Waveform << 1) & 0xFF) | (APUPulse2Waveform >> 7)
-        else:
-            APUPulse2Timer -= 1
-        pulse2 = 1.0 if (APUPulse2Waveform & 0x80) != 0 else 0.0
-    else:
-        pulse2 = 0.0
+    if APUPulse1Enable:
+        if APUPulse1TimerReset >= 8:
+            if APUPulse1Length > 0:
+                if APUPulse1Timer == 0:
+                    APUPulse1Timer = APUPulse1TimerReset
+                    APUPulse1Waveform = ((APUPulse1Waveform << 1) & 0xFF) | (APUPulse1Waveform >> 7)
+                else:
+                    APUPulse1Timer -= 1
+                pulse1 = 1.0 if (APUPulse1Waveform & 0x80) != 0 else 0.0
+    
+    if APUPulse2Enable:
+        if APUPulse2TimerReset >= 8:
+            if APUPulse2Length > 0:
+                if APUPulse2Timer == 0:
+                    APUPulse2Timer = APUPulse2TimerReset
+                    APUPulse2Waveform = ((APUPulse2Waveform << 1) & 0xFF) | (APUPulse2Waveform >> 7)
+                else:
+                    APUPulse2Timer -= 1
+                pulse2 = 1.0 if (APUPulse2Waveform & 0x80) != 0 else 0.0
 
     APUFinalValue = (pulse1+pulse2)/2.0
     audioBatch.append(APUFinalValue)
